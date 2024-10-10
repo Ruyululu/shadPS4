@@ -11,6 +11,7 @@
 #include "common/path_util.h"
 #include "common/slot_vector.h"
 #include "core/address_space.h"
+#include "core/debug_state.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/kernel/libkernel.h"
 #include "core/libraries/libs.h"
@@ -320,20 +321,6 @@ static void WaitGpuIdle() {
     cv_lock.wait(lock, [] { return submission_lock == 0; });
 }
 
-static void DumpCommandList(std::span<const u32> cmd_list, const std::string& postfix) {
-    using namespace Common::FS;
-    const auto dump_dir = GetUserPath(PathType::PM4Dir);
-    if (!std::filesystem::exists(dump_dir)) {
-        std::filesystem::create_directories(dump_dir);
-    }
-    if (cmd_list.empty()) {
-        return;
-    }
-    const auto filename = fmt::format("{:08}_{}", frames_submitted, postfix);
-    const auto file = IOFile{dump_dir / filename, FileAccessMode::Write};
-    file.WriteSpan(cmd_list);
-}
-
 // Write a special ending NOP packet with N DWs data block
 template <u32 data_block_size>
 static inline u32* WriteTrailingNop(u32* cmdbuf) {
@@ -507,16 +494,18 @@ void PS4_SYSV_ABI sceGnmDingDong(u32 gnm_vqid, u32 next_offs_dw) {
 
     WaitGpuIdle();
 
-    /* Suspend logic goes here */
+    if (DebugState.ShouldPauseInSubmit()) {
+        DebugState.PauseGuestThreads();
+    }
 
     auto vqid = gnm_vqid - 1;
     auto& asc_queue = asc_queues[{vqid}];
     const auto* acb_ptr = reinterpret_cast<const u32*>(asc_queue.map_addr + *asc_queue.read_addr);
     const auto acb_size = next_offs_dw ? (next_offs_dw << 2u) - *asc_queue.read_addr
                                        : (asc_queue.ring_size_dw << 2u) - *asc_queue.read_addr;
-    const std::span<const u32> acb_span{acb_ptr, acb_size >> 2u};
+    const std::span acb_span{acb_ptr, acb_size >> 2u};
 
-    if (Config::dumpPM4()) {
+    if (DebugState.DumpingCurrentFrame()) {
         static auto last_frame_num = -1LL;
         static u32 seq_num{};
         if (last_frame_num == frames_submitted) {
@@ -536,8 +525,14 @@ void PS4_SYSV_ABI sceGnmDingDong(u32 gnm_vqid, u32 next_offs_dw) {
             acb = {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size};
         }
 
-        // File name format is: <queue>_<queue num>_<submit_num>
-        DumpCommandList(acb, fmt::format("acb_{}_{}", gnm_vqid, seq_num));
+        using namespace DebugStateType;
+
+        DebugState.PushQueueDump({
+            .type = QueueType::acb,
+            .submit_num = seq_num,
+            .num2 = gnm_vqid,
+            .data = {acb.begin(), acb.end()},
+        });
     }
 
     liverpool->SubmitAsc(vqid, acb_span);
@@ -1081,9 +1076,27 @@ s32 PS4_SYSV_ABI sceGnmInsertPopMarker(u32* cmdbuf, u32 size) {
     return -1;
 }
 
-int PS4_SYSV_ABI sceGnmInsertPushColorMarker() {
-    LOG_ERROR(Lib_GnmDriver, "(STUBBED) called");
-    return ORBIS_OK;
+s32 PS4_SYSV_ABI sceGnmInsertPushColorMarker(u32* cmdbuf, u32 size, const char* marker, u32 color) {
+    LOG_TRACE(Lib_GnmDriver, "called");
+
+    if (cmdbuf && marker) {
+        const auto len = std::strlen(marker);
+        const u32 packet_size = ((len + 0xc) >> 2) + ((len + 0x10) >> 3) * 2;
+        if (packet_size + 2 == size) {
+            auto* nop = reinterpret_cast<PM4CmdNop*>(cmdbuf);
+            nop->header =
+                PM4Type3Header{PM4ItOpcode::Nop, packet_size, PM4ShaderType::ShaderGraphics};
+            nop->data_block[0] = PM4CmdNop::PayloadType::DebugColorMarkerPush;
+            const auto marker_len = len + 1;
+            std::memcpy(&nop->data_block[1], marker, marker_len);
+            *reinterpret_cast<u32*>(reinterpret_cast<u8*>(&nop->data_block[1]) + marker_len + 8) =
+                color;
+            std::memset(reinterpret_cast<u8*>(&nop->data_block[1]) + marker_len + 8 + sizeof(u32),
+                        0, packet_size * 4 - marker_len - 8 - sizeof(u32));
+            return ORBIS_OK;
+        }
+    }
+    return -1;
 }
 
 s32 PS4_SYSV_ABI sceGnmInsertPushMarker(u32* cmdbuf, u32 size, const char* marker) {
@@ -2108,7 +2121,9 @@ s32 PS4_SYSV_ABI sceGnmSubmitCommandBuffers(u32 count, const u32* dcb_gpu_addrs[
 
     WaitGpuIdle();
 
-    /* Suspend logic goes here */
+    if (DebugState.ShouldPauseInSubmit()) {
+        DebugState.PauseGuestThreads();
+    }
 
     if (send_init_packet) {
         if (sdk_version <= 0x1ffffffu) {
@@ -2128,10 +2143,10 @@ s32 PS4_SYSV_ABI sceGnmSubmitCommandBuffers(u32 count, const u32* dcb_gpu_addrs[
         const auto dcb_size_dw = dcb_sizes_in_bytes[cbpair] >> 2;
         const auto ccb_size_dw = ccb_size_in_bytes >> 2;
 
-        const auto& dcb_span = std::span<const u32>{dcb_gpu_addrs[cbpair], dcb_size_dw};
-        const auto& ccb_span = std::span<const u32>{ccb, ccb_size_dw};
+        const auto& dcb_span = std::span{dcb_gpu_addrs[cbpair], dcb_size_dw};
+        const auto& ccb_span = std::span{ccb, ccb_size_dw};
 
-        if (Config::dumpPM4()) {
+        if (DebugState.DumpingCurrentFrame()) {
             static auto last_frame_num = -1LL;
             static u32 seq_num{};
             if (last_frame_num == frames_submitted && cbpair == 0) {
@@ -2141,9 +2156,20 @@ s32 PS4_SYSV_ABI sceGnmSubmitCommandBuffers(u32 count, const u32* dcb_gpu_addrs[
                 seq_num = 0u;
             }
 
-            // File name format is: <queue>_<submit num>_<buffer_in_submit>
-            DumpCommandList(dcb_span, fmt::format("dcb_{}_{}", seq_num, cbpair));
-            DumpCommandList(ccb_span, fmt::format("ccb_{}_{}", seq_num, cbpair));
+            using DebugStateType::QueueType;
+
+            DebugState.PushQueueDump({
+                .type = QueueType::dcb,
+                .submit_num = seq_num,
+                .num2 = cbpair,
+                .data = {dcb_span.begin(), dcb_span.end()},
+            });
+            DebugState.PushQueueDump({
+                .type = QueueType::ccb,
+                .submit_num = seq_num,
+                .num2 = cbpair,
+                .data = {ccb_span.begin(), ccb_span.end()},
+            });
         }
 
         liverpool->SubmitGfx(dcb_span, ccb_span);
@@ -2166,6 +2192,7 @@ int PS4_SYSV_ABI sceGnmSubmitDone() {
     liverpool->SubmitDone();
     send_init_packet = true;
     ++frames_submitted;
+    DebugState.IncGnmFrameNum();
     return ORBIS_OK;
 }
 

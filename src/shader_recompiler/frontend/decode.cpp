@@ -313,6 +313,7 @@ void GcnDecodeContext::repairOperandType() {
         m_instruction.src[2].type = ScalarType::Uint64;
         break;
     case Opcode::IMAGE_GATHER4_C:
+    case Opcode::IMAGE_GATHER4_C_O:
         m_instruction.src[0].type = ScalarType::Any;
         break;
     default:
@@ -653,7 +654,7 @@ void GcnDecodeContext::decodeInstructionVOP3(uint64_t hexInstruction) {
 
     OpcodeVOP3 vop3Op = static_cast<OpcodeVOP3>(op);
     if (IsVop3BEncoding(m_instruction.opcode)) {
-        m_instruction.dst[1].field = OperandField::ScalarGPR;
+        m_instruction.dst[1].field = getOperandField(sdst);
         m_instruction.dst[1].type = ScalarType::Uint64;
         m_instruction.dst[1].code = sdst;
     } else {

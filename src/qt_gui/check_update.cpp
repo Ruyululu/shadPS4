@@ -22,6 +22,8 @@
 #include <common/config.h>
 #include <common/path_util.h>
 #include <common/scm_rev.h>
+#include <common/version.h>
+#include <qprogressbar.h>
 #include "check_update.h"
 
 using namespace Common::FS;
@@ -37,20 +39,27 @@ CheckUpdate::CheckUpdate(const bool showMessage, QWidget* parent)
 CheckUpdate::~CheckUpdate() {}
 
 void CheckUpdate::CheckForUpdates(const bool showMessage) {
-    QString updateChannel = QString::fromStdString(Config::getUpdateChannel());
+    QString updateChannel;
     QUrl url;
 
-    if (updateChannel == "unstable") {
-        url = QUrl("https://api.github.com/repos/shadps4-emu/shadPS4/releases");
-    } else if (updateChannel == "stable") {
-        url = QUrl("https://api.github.com/repos/shadps4-emu/shadPS4/releases/latest");
-    } else {
-        QMessageBox::warning(
-            this, tr("Error"),
-            QString(tr("Invalid update channel: ") + updateChannel + "\n" +
-                    tr("In updateChannel in config.tml file must contain 'stable' or 'unstable'")
-                        .arg(updateChannel)));
-        return;
+    bool checkName = true;
+    while (checkName) {
+        updateChannel = QString::fromStdString(Config::getUpdateChannel());
+        if (updateChannel == "Nightly") {
+            url = QUrl("https://api.github.com/repos/shadps4-emu/shadPS4/releases");
+            checkName = false;
+        } else if (updateChannel == "Release") {
+            url = QUrl("https://api.github.com/repos/shadps4-emu/shadPS4/releases/latest");
+            checkName = false;
+        } else {
+            if (Common::isRelease) {
+                Config::setUpdateChannel("Release");
+            } else {
+                Config::setUpdateChannel("Nightly");
+            }
+            const auto config_dir = Common::FS::GetUserPath(Common::FS::PathType::UserDir);
+            Config::save(config_dir / "config.toml");
+        }
     }
 
     QNetworkRequest request(url);
@@ -88,7 +97,7 @@ void CheckUpdate::CheckForUpdates(const bool showMessage) {
 #endif
 
         QJsonObject jsonObj;
-        if (updateChannel == "unstable") {
+        if (updateChannel == "Nightly") {
             QJsonArray jsonArray = jsonDoc.array();
             for (const QJsonValue& value : jsonArray) {
                 jsonObj = value.toObject();
@@ -173,10 +182,13 @@ void CheckUpdate::setupUI(const QString& downloadUrl, const QString& latestDate,
     titleLayout->addWidget(titleLabel);
     layout->addLayout(titleLayout);
 
-    QString updateText = QString("<p><b><br>" + tr("Current Version") + ":</b> %1 (%2)<br><b>" +
-                                 tr("Latest Version") + ":</b> %3 (%4)</p><p>" +
-                                 tr("Do you want to update?") + "</p>")
-                             .arg(currentRev, currentDate, latestRev, latestDate);
+    QString updateChannel = QString::fromStdString(Config::getUpdateChannel());
+
+    QString updateText =
+        QString("<p><b><br>" + tr("Update Channel") + ": </b>" + updateChannel + "<br><b>" +
+                tr("Current Version") + ":</b> %1 (%2)<br><b>" + tr("Latest Version") +
+                ":</b> %3 (%4)</p><p>" + tr("Do you want to update?") + "</p>")
+            .arg(currentRev, currentDate, latestRev, latestDate);
     QLabel* updateLabel = new QLabel(updateText, this);
     layout->addWidget(updateLabel);
 
@@ -195,8 +207,6 @@ void CheckUpdate::setupUI(const QString& downloadUrl, const QString& latestDate,
     bottomLayout->addWidget(yesButton);
     bottomLayout->addWidget(noButton);
     layout->addLayout(bottomLayout);
-
-    QString updateChannel = QString::fromStdString(Config::getUpdateChannel());
 
     // Don't show changelog button if:
     // The current version is a pre-release and the version to be downloaded is a release.
@@ -304,20 +314,37 @@ void CheckUpdate::requestChangelog(const QString& currentRev, const QString& lat
 }
 
 void CheckUpdate::DownloadUpdate(const QString& url) {
+    QProgressBar* progressBar = new QProgressBar(this);
+    progressBar->setRange(0, 100);
+    progressBar->setTextVisible(true);
+    progressBar->setValue(0);
+
+    layout()->addWidget(progressBar);
+
     QNetworkRequest request(url);
     QNetworkReply* reply = networkManager->get(request);
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, url]() {
+    connect(reply, &QNetworkReply::downloadProgress, this,
+            [progressBar](qint64 bytesReceived, qint64 bytesTotal) {
+                if (bytesTotal > 0) {
+                    int percentage = static_cast<int>((bytesReceived * 100) / bytesTotal);
+                    progressBar->setValue(percentage);
+                }
+            });
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, progressBar, url]() {
+        progressBar->setValue(100);
         if (reply->error() != QNetworkReply::NoError) {
             QMessageBox::warning(this, tr("Error"),
                                  tr("Network error occurred while trying to access the URL") +
                                      ":\n" + url + "\n" + reply->errorString());
             reply->deleteLater();
+            progressBar->deleteLater();
             return;
         }
 
-        QString userPath =
-            QString::fromStdString(Common::FS::GetUserPath(Common::FS::PathType::UserDir).string());
+        QString userPath;
+        Common::FS::PathToQString(userPath, Common::FS::GetUserPath(Common::FS::PathType::UserDir));
         QString tempDownloadPath = userPath + "/temp_download_update";
         QDir dir(tempDownloadPath);
         if (!dir.exists()) {
@@ -339,16 +366,24 @@ void CheckUpdate::DownloadUpdate(const QString& url) {
         }
 
         reply->deleteLater();
+        progressBar->deleteLater();
     });
 }
 
 void CheckUpdate::Install() {
-    QString userPath =
-        QString::fromStdString(Common::FS::GetUserPath(Common::FS::PathType::UserDir).string());
+    QString userPath;
+    Common::FS::PathToQString(userPath, Common::FS::GetUserPath(Common::FS::PathType::UserDir));
 
-    QString startingUpdate = tr("Starting Update...");
+    QString rootPath;
+    Common::FS::PathToQString(rootPath, std::filesystem::current_path());
+
     QString tempDirPath = userPath + "/temp_download_update";
-    QString rootPath = QString::fromStdString(std::filesystem::current_path().string());
+    QString startingUpdate = tr("Starting Update...");
+
+    QString binaryStartingUpdate;
+    for (QChar c : startingUpdate) {
+        binaryStartingUpdate.append(QString::number(c.unicode(), 2).rightJustified(16, '0'));
+    }
 
     QString scriptContent;
     QString scriptFileName;
@@ -360,7 +395,13 @@ void CheckUpdate::Install() {
     scriptFileName = tempDirPath + "/update.ps1";
     scriptContent = QStringLiteral(
         "Set-ExecutionPolicy Bypass -Scope Process -Force\n"
-        "Write-Output '%1'\n"
+        "$binaryStartingUpdate = '%1'\n"
+        "$chars = @()\n"
+        "for ($i = 0; $i -lt $binaryStartingUpdate.Length; $i += 16) {\n"
+        "    $chars += [char]([convert]::ToInt32($binaryStartingUpdate.Substring($i, 16), 2))\n"
+        "}\n"
+        "$startingUpdate = -join $chars\n"
+        "Write-Output $startingUpdate\n"
         "Expand-Archive -Path '%2\\temp_download_update.zip' -DestinationPath '%2' -Force\n"
         "Start-Sleep -Seconds 3\n"
         "Copy-Item -Recurse -Force '%2\\*' '%3\\'\n"
@@ -425,6 +466,10 @@ void CheckUpdate::Install() {
         "    sleep 2\n"
         "    extract_file\n"
         "    sleep 2\n"
+        "    if pgrep -f \"Shadps4-qt.AppImage\" > /dev/null; then\n"
+        "        pkill -f \"Shadps4-qt.AppImage\"\n"
+        "        sleep 2\n"
+        "    fi\n"
         "    cp -r \"%2/\"* \"%3/\"\n"
         "    sleep 2\n"
         "    rm \"%3/update.sh\"\n"
@@ -479,7 +524,12 @@ void CheckUpdate::Install() {
     QFile scriptFile(scriptFileName);
     if (scriptFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QTextStream out(&scriptFile);
+#ifdef Q_OS_WIN
+        out << scriptContent.arg(binaryStartingUpdate).arg(tempDirPath).arg(rootPath);
+#endif
+#if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
         out << scriptContent.arg(startingUpdate).arg(tempDirPath).arg(rootPath);
+#endif
         scriptFile.close();
 
 // Make the script executable on Unix-like systems

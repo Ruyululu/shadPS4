@@ -44,7 +44,7 @@ Liverpool::~Liverpool() {
 }
 
 void Liverpool::Process(std::stop_token stoken) {
-    Common::SetCurrentThreadName("GPU_CommandProcessor");
+    Common::SetCurrentThreadName("shadPS4:GPU_CommandProcessor");
 
     while (!stoken.stop_requested()) {
         {
@@ -223,6 +223,17 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                                                  marker_sz};
                     if (rasterizer) {
                         rasterizer->ScopeMarkerBegin(label);
+                    }
+                    break;
+                }
+                case PM4CmdNop::PayloadType::DebugColorMarkerPush: {
+                    const auto marker_sz = nop->header.count.Value() * 2;
+                    const std::string_view label{reinterpret_cast<const char*>(&nop->data_block[1]),
+                                                 marker_sz};
+                    const u32 color = *reinterpret_cast<const u32*>(
+                        reinterpret_cast<const u8*>(&nop->data_block[1]) + marker_sz);
+                    if (rasterizer) {
+                        rasterizer->ScopedMarkerInsertColor(label, color);
                     }
                     break;
                 }

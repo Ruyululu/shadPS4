@@ -7,6 +7,8 @@
 #include "common/types.h"
 
 constexpr u64 SCE_KERNEL_MAIN_DMEM_SIZE = 5056_MB; // ~ 5GB
+// TODO: Confirm this value on hardware.
+constexpr u64 SCE_KERNEL_MAIN_DMEM_SIZE_PRO = 5568_MB; // ~ 5.5GB
 
 namespace Libraries::Kernel {
 
@@ -113,5 +115,12 @@ s32 PS4_SYSV_ABI sceKernelBatchMap2(OrbisKernelBatchMapEntry* entries, int numEn
                                     int* numEntriesOut, int flags);
 
 s32 PS4_SYSV_ABI sceKernelSetVirtualRangeName(const void* addr, size_t len, const char* name);
+
+s32 PS4_SYSV_ABI sceKernelMemoryPoolExpand(u64 searchStart, u64 searchEnd, size_t len,
+                                           size_t alignment, u64* physAddrOut);
+s32 PS4_SYSV_ABI sceKernelMemoryPoolReserve(void* addrIn, size_t len, size_t alignment, int flags,
+                                            void** addrOut);
+s32 PS4_SYSV_ABI sceKernelMemoryPoolCommit(void* addr, size_t len, int type, int prot, int flags);
+s32 PS4_SYSV_ABI sceKernelMemoryPoolDecommit(void* addr, size_t len, int flags);
 
 } // namespace Libraries::Kernel

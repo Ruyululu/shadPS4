@@ -11,6 +11,8 @@ class SymbolsResolver;
 
 namespace Libraries::NpManager {
 
+constexpr int ORBIS_NP_ERROR_SIGNED_OUT = 0x80550006;
+
 enum OrbisNpState {
     ORBIS_NP_STATE_UNKNOWN = 0,
     ORBIS_NP_STATE_SIGNED_OUT,
@@ -216,7 +218,7 @@ int PS4_SYSV_ABI sceNpCheckNpReachability();
 int PS4_SYSV_ABI sceNpCheckPlus();
 int PS4_SYSV_ABI sceNpCreateAsyncRequest();
 int PS4_SYSV_ABI sceNpCreateRequest();
-int PS4_SYSV_ABI sceNpDeleteRequest();
+int PS4_SYSV_ABI sceNpDeleteRequest(int reqId);
 int PS4_SYSV_ABI sceNpGetAccountAge();
 int PS4_SYSV_ABI sceNpGetAccountCountry();
 int PS4_SYSV_ABI sceNpGetAccountCountryA();
@@ -234,7 +236,7 @@ int PS4_SYSV_ABI sceNpGetNpReachabilityState();
 int PS4_SYSV_ABI sceNpGetOnlineId();
 int PS4_SYSV_ABI sceNpGetParentalControlInfo();
 int PS4_SYSV_ABI sceNpGetParentalControlInfoA();
-int PS4_SYSV_ABI sceNpGetState();
+int PS4_SYSV_ABI sceNpGetState(s32 userId, OrbisNpState* state);
 int PS4_SYSV_ABI sceNpGetUserIdByAccountId();
 int PS4_SYSV_ABI sceNpGetUserIdByOnlineId();
 int PS4_SYSV_ABI sceNpHasSignedUp();

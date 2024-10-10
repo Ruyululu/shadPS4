@@ -25,7 +25,7 @@ asm(".zerofill GUEST_SYSTEM,GUEST_SYSTEM,__guest_system,0xFBFC00000");
 
 namespace Core {
 
-static constexpr size_t BackingSize = SCE_KERNEL_MAIN_DMEM_SIZE;
+static constexpr size_t BackingSize = SCE_KERNEL_MAIN_DMEM_SIZE_PRO;
 
 #ifdef _WIN32
 
@@ -72,7 +72,8 @@ struct AddressSpace::Impl {
             }
             reduction += ReductionOnFail;
         }
-        ASSERT_MSG(virtual_base, "Unable to reserve virtual address space!");
+        ASSERT_MSG(virtual_base, "Unable to reserve virtual address space: {}",
+                   Common::GetLastErrorMsg());
 
         // Take the reduction off of the system managed area, and leave the others unchanged.
         system_managed_base = virtual_base;

@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 if(APPLE)
     enable_language(OBJC)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET 11)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 14)
 endif()
 
 if (NOT CMAKE_BUILD_TYPE)
@@ -144,7 +144,7 @@ add_subdirectory(externals)
 include_directories(src)
 
 if(ENABLE_QT_GUI)
-    find_package(Qt6 REQUIRED COMPONENTS Widgets Concurrent LinguistTools Network)
+    find_package(Qt6 REQUIRED COMPONENTS Widgets Concurrent LinguistTools Network Multimedia)
     qt_standard_project_setup()
     set(CMAKE_AUTORCC ON)
     set(CMAKE_AUTOMOC ON)
@@ -324,6 +324,10 @@ set(USBD_LIB src/core/libraries/usbd/usbd.cpp
              src/core/libraries/usbd/usbd.h
 )
 
+set(FIBER_LIB src/core/libraries/fiber/fiber.cpp
+              src/core/libraries/fiber/fiber.h
+)
+
 set(NP_LIBS src/core/libraries/np_manager/np_manager.cpp
             src/core/libraries/np_manager/np_manager.h
             src/core/libraries/np_score/np_score.cpp
@@ -336,6 +340,19 @@ set(NP_LIBS src/core/libraries/np_manager/np_manager.cpp
 
 set(MISC_LIBS  src/core/libraries/screenshot/screenshot.cpp
                src/core/libraries/screenshot/screenshot.h
+)
+
+set(DEV_TOOLS src/core/devtools/layer.cpp
+              src/core/devtools/layer.h
+              src/core/devtools/gcn/gcn_context_regs.cpp
+              src/core/devtools/gcn/gcn_op_names.cpp
+              src/core/devtools/gcn/gcn_shader_regs.cpp
+              src/core/devtools/widget/cmd_list.cpp
+              src/core/devtools/widget/cmd_list.h
+              src/core/devtools/widget/frame_dump.cpp
+              src/core/devtools/widget/frame_dump.h
+              src/core/devtools/widget/frame_graph.cpp
+              src/core/devtools/widget/frame_graph.h
 )
 
 set(COMMON src/common/logging/backend.cpp
@@ -361,6 +378,8 @@ set(COMMON src/common/logging/backend.cpp
            src/common/debug.h
            src/common/decoder.cpp
            src/common/decoder.h
+           src/common/discord_rpc_handler.cpp
+           src/common/discord_rpc_handler.h
            src/common/elf_info.h
            src/common/endian.h
            src/common/enum.h
@@ -449,6 +468,10 @@ set(CORE src/core/aerolib/stubs.cpp
          ${USBD_LIB}
          ${MISC_LIBS}
          ${DIALOGS_LIB}
+         ${FIBER_LIB}
+         ${DEV_TOOLS}
+         src/core/debug_state.cpp
+         src/core/debug_state.h
          src/core/linker.cpp
          src/core/linker.h
          src/core/memory.cpp
@@ -502,6 +525,7 @@ set(SHADER_RECOMPILER src/shader_recompiler/exception.h
                       src/shader_recompiler/frontend/translate/data_share.cpp
                       src/shader_recompiler/frontend/translate/export.cpp
                       src/shader_recompiler/frontend/translate/scalar_alu.cpp
+                      src/shader_recompiler/frontend/translate/scalar_flow.cpp
                       src/shader_recompiler/frontend/translate/scalar_memory.cpp
                       src/shader_recompiler/frontend/translate/translate.cpp
                       src/shader_recompiler/frontend/translate/translate.h
@@ -510,6 +534,8 @@ set(SHADER_RECOMPILER src/shader_recompiler/exception.h
                       src/shader_recompiler/frontend/translate/vector_memory.cpp
                       src/shader_recompiler/frontend/control_flow_graph.cpp
                       src/shader_recompiler/frontend/control_flow_graph.h
+                      src/shader_recompiler/frontend/copy_shader.cpp
+                      src/shader_recompiler/frontend/copy_shader.h
                       src/shader_recompiler/frontend/decode.cpp
                       src/shader_recompiler/frontend/decode.h
                       src/shader_recompiler/frontend/fetch_shader.cpp
@@ -526,6 +552,7 @@ set(SHADER_RECOMPILER src/shader_recompiler/exception.h
                       src/shader_recompiler/ir/passes/ir_passes.h
                       src/shader_recompiler/ir/passes/lower_shared_mem_to_registers.cpp
                       src/shader_recompiler/ir/passes/resource_tracking_pass.cpp
+                      src/shader_recompiler/ir/passes/ring_access_elimination.cpp
                       src/shader_recompiler/ir/passes/shader_info_collection_pass.cpp
                       src/shader_recompiler/ir/passes/ssa_rewrite_pass.cpp
                       src/shader_recompiler/ir/abstract_syntax_list.h
@@ -558,6 +585,7 @@ set(VIDEO_CORE src/video_core/amdgpu/liverpool.cpp
                src/video_core/amdgpu/pm4_cmds.h
                src/video_core/amdgpu/pm4_opcodes.h
                src/video_core/amdgpu/resource.h
+               src/video_core/amdgpu/types.h
                src/video_core/amdgpu/default_context.cpp
                src/video_core/buffer_cache/buffer.cpp
                src/video_core/buffer_cache/buffer.h
@@ -623,8 +651,6 @@ set(IMGUI src/imgui/imgui_config.h
           src/imgui/imgui_layer.h
           src/imgui/imgui_std.h
           src/imgui/imgui_texture.h
-          src/imgui/layer/video_info.cpp
-          src/imgui/layer/video_info.h
           src/imgui/renderer/imgui_core.cpp
           src/imgui/renderer/imgui_core.h
           src/imgui/renderer/imgui_impl_sdl3.cpp
@@ -653,6 +679,8 @@ qt_add_resources(RESOURCE_FILES src/shadps4.qrc)
 set(QT_GUI src/qt_gui/about_dialog.cpp
            src/qt_gui/about_dialog.h
            src/qt_gui/about_dialog.ui
+           src/qt_gui/background_music_player.cpp
+           src/qt_gui/background_music_player.h
            src/qt_gui/cheats_patches.cpp
            src/qt_gui/cheats_patches.h
            src/qt_gui/check_update.cpp
@@ -670,6 +698,8 @@ set(QT_GUI src/qt_gui/about_dialog.cpp
            src/qt_gui/game_grid_frame.h
            src/qt_gui/game_install_dialog.cpp
            src/qt_gui/game_install_dialog.h
+           src/qt_gui/install_dir_select.cpp
+           src/qt_gui/install_dir_select.h
            src/qt_gui/pkg_viewer.cpp
            src/qt_gui/pkg_viewer.h
            src/qt_gui/trophy_viewer.cpp
@@ -721,7 +751,7 @@ endif()
 
 create_target_directory_groups(shadps4)
 
-target_link_libraries(shadps4 PRIVATE magic_enum::magic_enum fmt::fmt toml11::toml11 tsl::robin_map xbyak::xbyak Tracy::TracyClient RenderDoc::API FFmpeg::ffmpeg Dear_ImGui)
+target_link_libraries(shadps4 PRIVATE magic_enum::magic_enum fmt::fmt toml11::toml11 tsl::robin_map xbyak::xbyak Tracy::TracyClient RenderDoc::API FFmpeg::ffmpeg Dear_ImGui gcn)
 target_link_libraries(shadps4 PRIVATE Boost::headers GPUOpen::VulkanMemoryAllocator sirit Vulkan::Headers xxHash::xxhash Zydis::Zydis glslang::SPIRV glslang::glslang SDL3::SDL3 pugixml::pugixml)
 
 target_compile_definitions(shadps4 PRIVATE IMGUI_USER_CONFIG="imgui/imgui_config.h")
@@ -760,7 +790,7 @@ else()
 endif()
 
 if (ENABLE_QT_GUI)
-   target_link_libraries(shadps4 PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network)
+   target_link_libraries(shadps4 PRIVATE Qt6::Widgets Qt6::Concurrent Qt6::Network Qt6::Multimedia)
    add_definitions(-DENABLE_QT_GUI)
 endif()
 
@@ -837,3 +867,6 @@ if (UNIX AND NOT APPLE)
         target_link_libraries(shadps4 PRIVATE ${OPENSSL_LIBRARIES})
     endif()
 endif()
+
+# Discord RPC
+target_link_libraries(shadps4 PRIVATE discord-rpc)

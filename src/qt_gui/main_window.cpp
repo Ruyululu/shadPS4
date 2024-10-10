@@ -2,23 +2,28 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <QDockWidget>
+#include <QKeyEvent>
 #include <QProgressDialog>
 
 #include "about_dialog.h"
 #include "cheats_patches.h"
 #include "check_update.h"
 #include "common/io_file.h"
+#include "common/path_util.h"
+#include "common/scm_rev.h"
 #include "common/string_util.h"
 #include "common/version.h"
 #include "core/file_format/pkg.h"
 #include "core/loader.h"
 #include "game_install_dialog.h"
+#include "install_dir_select.h"
 #include "main_window.h"
 #include "settings_dialog.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWindow) {
     ui->setupUi(this);
+    installEventFilter(this);
     setAttribute(Qt::WA_DeleteOnClose);
 }
 
@@ -43,10 +48,18 @@ bool MainWindow::Init() {
     GetPhysicalDevices();
     // show ui
     setMinimumSize(350, minimumSizeHint().height());
-    setWindowTitle(QString::fromStdString("shadPS4 v" + std::string(Common::VERSION)));
+    std::string window_title = "";
+    if (Common::isRelease) {
+        window_title = fmt::format("shadPS4 v{}", Common::VERSION);
+    } else {
+        window_title = fmt::format("shadPS4 v{} {} {}", Common::VERSION, Common::g_scm_branch,
+                                   Common::g_scm_desc);
+    }
+    setWindowTitle(QString::fromStdString(window_title));
     this->show();
     // load game list
     LoadGameLists();
+    // Check for update
     CheckUpdateMain(true);
 
     auto end = std::chrono::steady_clock::now();
@@ -58,6 +71,14 @@ bool MainWindow::Init() {
     QString statusMessage =
         "Games: " + QString::number(numGames) + " (" + QString::number(duration.count()) + "ms)";
     statusBar->showMessage(statusMessage);
+
+    // Initialize Discord RPC
+    if (Config::getEnableDiscordRPC()) {
+        auto* rpc = Common::Singleton<DiscordRPCHandler::RPC>::Instance();
+        rpc->init();
+        rpc->setStatusIdling();
+    }
+
     return true;
 }
 
@@ -297,6 +318,7 @@ void MainWindow::CreateConnects() {
     });
     // List
     connect(ui->setlistModeListAct, &QAction::triggered, m_dock_widget.data(), [this]() {
+        BackgroundMusicPlayer::getInstance().stopMusic();
         m_dock_widget->setWidget(m_game_list_frame.data());
         m_game_grid_frame->hide();
         m_elf_viewer->hide();
@@ -313,6 +335,7 @@ void MainWindow::CreateConnects() {
     });
     // Grid
     connect(ui->setlistModeGridAct, &QAction::triggered, m_dock_widget.data(), [this]() {
+        BackgroundMusicPlayer::getInstance().stopMusic();
         m_dock_widget->setWidget(m_game_grid_frame.data());
         m_game_grid_frame->show();
         m_game_list_frame->hide();
@@ -329,6 +352,7 @@ void MainWindow::CreateConnects() {
     });
     // Elf
     connect(ui->setlistElfAct, &QAction::triggered, m_dock_widget.data(), [this]() {
+        BackgroundMusicPlayer::getInstance().stopMusic();
         m_dock_widget->setWidget(m_elf_viewer.data());
         m_game_grid_frame->hide();
         m_game_list_frame->hide();
@@ -433,12 +457,14 @@ void MainWindow::CreateConnects() {
                    .arg(" APP VERSION", -11)
                    .arg("                Path");
         for (const GameInfo& game : m_game_info->m_games) {
+            QString game_path;
+            Common::FS::PathToQString(game_path, game.path);
             out << QString("%1 %2 %3     %4 %5\n")
                        .arg(QString::fromStdString(game.name), -50)
                        .arg(QString::fromStdString(game.serial), -10)
                        .arg(QString::fromStdString(game.fw), -4)
                        .arg(QString::fromStdString(game.version), -11)
-                       .arg(QString::fromStdString(game.path));
+                       .arg(game_path);
         }
     });
 
@@ -504,33 +530,36 @@ void MainWindow::CreateConnects() {
 }
 
 void MainWindow::StartGame() {
+    isGameRunning = true;
+    BackgroundMusicPlayer::getInstance().stopMusic();
     QString gamePath = "";
     int table_mode = Config::getTableMode();
     if (table_mode == 0) {
         if (m_game_list_frame->currentItem()) {
             int itemID = m_game_list_frame->currentItem()->row();
-            gamePath = QString::fromStdString(m_game_info->m_games[itemID].path + "/eboot.bin");
+            Common::FS::PathToQString(gamePath, m_game_info->m_games[itemID].path / "eboot.bin");
         }
     } else if (table_mode == 1) {
         if (m_game_grid_frame->cellClicked) {
             int itemID = (m_game_grid_frame->crtRow * m_game_grid_frame->columnCnt) +
                          m_game_grid_frame->crtColumn;
-            gamePath = QString::fromStdString(m_game_info->m_games[itemID].path + "/eboot.bin");
+            Common::FS::PathToQString(gamePath, m_game_info->m_games[itemID].path / "eboot.bin");
         }
     } else {
         if (m_elf_viewer->currentItem()) {
             int itemID = m_elf_viewer->currentItem()->row();
-            gamePath = QString::fromStdString(m_elf_viewer->m_elf_list[itemID].toStdString());
+            gamePath = m_elf_viewer->m_elf_list[itemID];
         }
     }
     if (gamePath != "") {
         AddRecentFiles(gamePath);
         Core::Emulator emulator;
-        if (!std::filesystem::exists(gamePath.toUtf8().constData())) {
+        const auto path = Common::FS::PathFromQString(gamePath);
+        if (!std::filesystem::exists(path)) {
             QMessageBox::critical(nullptr, tr("Run Game"), QString(tr("Eboot.bin file not found")));
             return;
         }
-        emulator.Run(gamePath.toUtf8().constData());
+        emulator.Run(path);
     }
 }
 
@@ -586,6 +615,7 @@ void MainWindow::ConfigureGuiFromSettings() {
     } else {
         ui->setlistModeGridAct->setChecked(true);
     }
+    BackgroundMusicPlayer::getInstance().setVolume(Config::getBGMvolume());
 }
 
 void MainWindow::SaveWindowState() const {
@@ -605,10 +635,7 @@ void MainWindow::InstallPkg() {
         int pkgNum = 0;
         for (const QString& file : fileNames) {
             ++pkgNum;
-            std::filesystem::path path(file.toStdString());
-#ifdef _WIN64
-            path = std::filesystem::path(file.toStdWString());
-#endif
+            std::filesystem::path path = Common::FS::PathFromQString(file);
             MainWindow::InstallDragDropPkg(path, pkgNum, nPkg);
         }
     }
@@ -626,10 +653,7 @@ void MainWindow::BootGame() {
             QMessageBox::critical(nullptr, tr("Game Boot"),
                                   QString(tr("Only one file can be selected!")));
         } else {
-            std::filesystem::path path(fileNames[0].toStdString());
-#ifdef _WIN64
-            path = std::filesystem::path(fileNames[0].toStdWString());
-#endif
+            std::filesystem::path path = Common::FS::PathFromQString(fileNames[0]);
             Core::Emulator emulator;
             if (!std::filesystem::exists(path)) {
                 QMessageBox::critical(nullptr, tr("Run Game"),
@@ -643,12 +667,20 @@ void MainWindow::BootGame() {
 
 void MainWindow::InstallDragDropPkg(std::filesystem::path file, int pkgNum, int nPkg) {
     if (Loader::DetectFileType(file) == Loader::FileTypes::Pkg) {
-        pkg = PKG();
-        pkg.Open(file);
         std::string failreason;
-        auto extract_path = std::filesystem::path(Config::getGameInstallDir()) / pkg.GetTitleID();
+        pkg = PKG();
+        if (!pkg.Open(file, failreason)) {
+            QMessageBox::critical(this, tr("PKG ERROR"), QString::fromStdString(failreason));
+            return;
+        }
+        InstallDirSelect ids;
+        ids.exec();
+        auto game_install_dir = ids.getSelectedDirectory();
+        auto extract_path = game_install_dir / pkg.GetTitleID();
         QString pkgType = QString::fromStdString(pkg.GetPkgFlags());
-        QDir game_dir(QString::fromStdString(extract_path.string()));
+        QString gameDirPath;
+        Common::FS::PathToQString(gameDirPath, extract_path);
+        QDir game_dir(gameDirPath);
         if (game_dir.exists()) {
             QMessageBox msgBox;
             msgBox.setWindowTitle(tr("PKG Extraction"));
@@ -668,9 +700,11 @@ void MainWindow::InstallDragDropPkg(std::filesystem::path file, int pkgNum, int 
             }
             std::string entitlement_label = Common::SplitString(content_id, '-')[2];
 
-            auto addon_extract_path = Common::FS::GetUserPath(Common::FS::PathType::AddonsDir) /
-                                      pkg.GetTitleID() / entitlement_label;
-            QDir addon_dir(QString::fromStdString(addon_extract_path.string()));
+            auto addon_extract_path =
+                Config::getAddonInstallDir() / pkg.GetTitleID() / entitlement_label;
+            QString addonDirPath;
+            Common::FS::PathToQString(addonDirPath, addon_extract_path);
+            QDir addon_dir(addonDirPath);
             auto category = psf.GetString("CATEGORY");
 
             if (pkgType.contains("PATCH")) {
@@ -735,8 +769,7 @@ void MainWindow::InstallDragDropPkg(std::filesystem::path file, int pkgNum, int 
                         return;
                     }
                 } else {
-                    msgBox.setText(QString(tr("DLC already installed:") + "\n" +
-                                           QString::fromStdString(addon_extract_path.string()) +
+                    msgBox.setText(QString(tr("DLC already installed:") + "\n" + addonDirPath +
                                            "\n\n" + tr("Would you like to overwrite?")));
                     msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
                     msgBox.setDefaultButton(QMessageBox::No);
@@ -748,8 +781,7 @@ void MainWindow::InstallDragDropPkg(std::filesystem::path file, int pkgNum, int 
                     }
                 }
             } else {
-                msgBox.setText(QString(tr("Game already installed") + "\n" +
-                                       QString::fromStdString(extract_path.string()) + "\n" +
+                msgBox.setText(QString(tr("Game already installed") + "\n" + gameDirPath + "\n" +
                                        tr("Would you like to overwrite?")));
                 msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
                 msgBox.setDefaultButton(QMessageBox::No);
@@ -792,7 +824,8 @@ void MainWindow::InstallDragDropPkg(std::filesystem::path file, int pkgNum, int 
                 QFutureWatcher<void> futureWatcher;
                 connect(&futureWatcher, &QFutureWatcher<void>::finished, this, [=, this]() {
                     if (pkgNum == nPkg) {
-                        QString path = QString::fromStdString(Config::getGameInstallDir());
+                        QString path;
+                        Common::FS::PathToQString(path, game_install_dir);
                         QMessageBox extractMsgBox(this);
                         extractMsgBox.setWindowTitle(tr("Extraction Finished"));
                         extractMsgBox.setText(
@@ -964,14 +997,14 @@ void MainWindow::CreateRecentGameActions() {
     }
 
     connect(m_recent_files_group, &QActionGroup::triggered, this, [this](QAction* action) {
-        QString gamePath = action->text();
-        AddRecentFiles(gamePath); // Update the list.
+        auto gamePath = Common::FS::PathFromQString(action->text());
+        AddRecentFiles(action->text()); // Update the list.
         Core::Emulator emulator;
-        if (!std::filesystem::exists(gamePath.toUtf8().constData())) {
+        if (!std::filesystem::exists(gamePath)) {
             QMessageBox::critical(nullptr, tr("Run Game"), QString(tr("Eboot.bin file not found")));
             return;
         }
-        emulator.Run(gamePath.toUtf8().constData());
+        emulator.Run(gamePath);
     });
 }
 
@@ -1005,4 +1038,18 @@ void MainWindow::OnLanguageChanged(const std::string& locale) {
     Config::setEmulatorLanguage(locale);
 
     LoadTranslation();
+}
+
+bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
+    if (event->type() == QEvent::KeyPress) {
+        QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_Enter || keyEvent->key() == Qt::Key_Return) {
+            auto tblMode = Config::getTableMode();
+            if (tblMode != 2 && (tblMode != 1 || m_game_grid_frame->IsValidCellSelected())) {
+                StartGame();
+                return true;
+            }
+        }
+    }
+    return QMainWindow::eventFilter(obj, event);
 }

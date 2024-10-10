@@ -116,6 +116,7 @@ public:
 
     // SOPP
     void S_BARRIER();
+    void S_SENDMSG(const GcnInst& inst);
 
     // Scalar Memory
     // SMRD
@@ -154,6 +155,8 @@ public:
     void V_SUB_I32(const GcnInst& inst);
     void V_SUBREV_I32(const GcnInst& inst);
     void V_ADDC_U32(const GcnInst& inst);
+    void V_SUBB_U32(const GcnInst& inst);
+    void V_SUBBREV_U32(const GcnInst& inst);
     void V_LDEXP_F32(const GcnInst& inst);
     void V_CVT_PKNORM_U16_F32(const GcnInst& inst);
     void V_CVT_PKRTZ_F16_F32(const GcnInst& inst);
@@ -161,14 +164,19 @@ public:
     // VOP1
     void V_MOV(const GcnInst& inst);
     void V_READFIRSTLANE_B32(const GcnInst& inst);
+    void V_CVT_I32_F64(const GcnInst& inst);
+    void V_CVT_F64_I32(const GcnInst& inst);
     void V_CVT_F32_I32(const GcnInst& inst);
     void V_CVT_F32_U32(const GcnInst& inst);
     void V_CVT_U32_F32(const GcnInst& inst);
     void V_CVT_I32_F32(const GcnInst& inst);
     void V_CVT_F16_F32(const GcnInst& inst);
     void V_CVT_F32_F16(const GcnInst& inst);
+    void V_CVT_RPI_I32_F32(const GcnInst& inst);
     void V_CVT_FLR_I32_F32(const GcnInst& inst);
     void V_CVT_OFF_F32_I4(const GcnInst& inst);
+    void V_CVT_F32_F64(const GcnInst& inst);
+    void V_CVT_F64_F32(const GcnInst& inst);
     void V_CVT_F32_UBYTE(u32 index, const GcnInst& inst);
     void V_FRACT_F32(const GcnInst& inst);
     void V_TRUNC_F32(const GcnInst& inst);
@@ -267,7 +275,9 @@ private:
     void SetDst(const InstOperand& operand, const IR::U32F32& value);
     void SetDst64(const InstOperand& operand, const IR::U64F64& value_raw);
 
-    // Vector ALU Helprers
+    // Vector ALU Helpers
+    IR::U32 GetCarryIn(const GcnInst& inst);
+    void SetCarryOut(const GcnInst& inst, const IR::U1& carry);
     IR::U32 VMovRelSHelper(u32 src_vgprno, const IR::U32 m0);
     void VMovRelDHelper(u32 dst_vgprno, const IR::U32 src_val, const IR::U32 m0);
 
